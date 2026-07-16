@@ -1,0 +1,11 @@
+/bin/
+/.build/
+/coverage.out
+/sbom.cdx.json
+/.env
+/.env.*
+!/.env.example
+*.log
+.DS_Store
+.idea/
+.vscode/
