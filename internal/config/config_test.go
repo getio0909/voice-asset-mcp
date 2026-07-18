@@ -33,6 +33,14 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "reject invalid rate limit",
+			config: Config{
+				Transport: TransportHTTP, ListenAddr: "127.0.0.1:8090",
+				ServerBaseURL: "https://server.example", RateLimitPerMin: -1,
+			},
+			wantErr: true,
+		},
+		{
 			name: "remote HTTP requires native TLS",
 			config: Config{
 				Transport:       TransportHTTP,
@@ -62,5 +70,23 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestWriteToolsAreOptInAndInvalidEnvironmentFailsClosed(t *testing.T) {
+	t.Setenv("VOICE_ASSET_MCP_ENABLE_WRITES", "")
+	if config := FromEnv(); config.EnableWrites {
+		t.Fatal("writes enabled by default")
+	}
+
+	t.Setenv("VOICE_ASSET_MCP_ENABLE_WRITES", "true")
+	if config := FromEnv(); !config.EnableWrites || config.Validate() != nil {
+		t.Fatalf("true write configuration validation error = %v", config.Validate())
+	}
+
+	t.Setenv("VOICE_ASSET_MCP_ENABLE_WRITES", "yes")
+	config := FromEnv()
+	if config.EnableWrites || config.Validate() == nil {
+		t.Fatalf("invalid write configuration validation error = %v", config.Validate())
 	}
 }
