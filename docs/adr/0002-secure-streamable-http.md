@@ -15,7 +15,7 @@ Limit MCP request bodies to 2 MiB, reject unsafe cross-origin browser requests,
 expire idle sessions after 15 minutes, and retain the SDK's localhost rebinding
 protection. Require an inbound bearer token and native TLS certificate/key when
 binding to a non-loopback address. Require HTTPS for a non-loopback VoiceAsset
-Server URL. Accept only Server API `v1` contract `0.1.0` and fail closed on
+Server URL. Accept only Server API `v1` contract `0.22.0` and fail closed on
 malformed capability declarations.
 
 ## Consequences

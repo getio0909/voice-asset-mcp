@@ -1,8 +1,10 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,7 +20,7 @@ const maxResponseBytes = 1 << 20
 
 const (
 	SupportedAPIVersion      = "v1"
-	SupportedContractVersion = "0.1.0"
+	SupportedContractVersion = "0.22.0"
 )
 
 var featureNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -62,38 +64,98 @@ func isLoopback(host string) bool {
 }
 
 func (c *Client) GetSystemCapabilities(ctx context.Context) (Capabilities, error) {
-	endpoint := c.baseURL.ResolveReference(&url.URL{Path: "/api/v1/system/capabilities"})
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
-	if err != nil {
-		return Capabilities{}, fmt.Errorf("create capabilities request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	if strings.TrimSpace(c.token) != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return Capabilities{}, fmt.Errorf("request capabilities: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
-		return Capabilities{}, fmt.Errorf("request capabilities: server returned HTTP %d", resp.StatusCode)
-	}
-
 	var capabilities Capabilities
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes))
-	if err := decoder.Decode(&capabilities); err != nil {
-		return Capabilities{}, fmt.Errorf("decode capabilities: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return Capabilities{}, fmt.Errorf("decode capabilities: unexpected trailing JSON")
+	if err := c.getJSON(ctx, "/api/v1/system/capabilities", nil, &capabilities, "request capabilities"); err != nil {
+		return Capabilities{}, err
 	}
 	if err := validateCapabilities(capabilities); err != nil {
 		return Capabilities{}, err
 	}
 	return capabilities, nil
+}
+
+func (c *Client) getJSON(
+	ctx context.Context,
+	path string,
+	query url.Values,
+	destination any,
+	operation string,
+) error {
+	return c.doJSON(ctx, http.MethodGet, path, query, nil, nil, http.StatusOK, destination, operation)
+}
+
+func (c *Client) writeJSON(
+	ctx context.Context,
+	method,
+	path string,
+	payload any,
+	headers map[string]string,
+	expectedStatus int,
+	destination any,
+	operation string,
+) error {
+	return c.doJSON(ctx, method, path, nil, payload, headers, expectedStatus, destination, operation)
+}
+
+func (c *Client) doJSON(
+	ctx context.Context,
+	method,
+	path string,
+	query url.Values,
+	payload any,
+	headers map[string]string,
+	expectedStatus int,
+	destination any,
+	operation string,
+) error {
+	endpoint := c.baseURL.ResolveReference(&url.URL{Path: path, RawQuery: query.Encode()})
+	var requestBody io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("%s: encode request: %w", operation, err)
+		}
+		requestBody = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), requestBody)
+	if err != nil {
+		return fmt.Errorf("%s: create request: %w", operation, err)
+	}
+	req.Header.Set("Accept", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if strings.TrimSpace(c.token) != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s: %w", operation, err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("%s: read response: %w", operation, err)
+	}
+	if len(responseBody) > maxResponseBytes {
+		return fmt.Errorf("%s: response exceeds %d bytes", operation, maxResponseBytes)
+	}
+	if resp.StatusCode != expectedStatus {
+		return fmt.Errorf("%s: server returned HTTP %d", operation, resp.StatusCode)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(responseBody))
+	if err := decoder.Decode(destination); err != nil {
+		return fmt.Errorf("%s: decode response: %w", operation, err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%s: decode response: unexpected trailing JSON", operation)
+	}
+	return nil
 }
 
 func validateCapabilities(capabilities Capabilities) error {

@@ -1,0 +1,55 @@
+name: Release candidate
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run release tests
+        run: go test ./...
+      - name: Build AMD64 and ARM64 archives
+        shell: bash
+        run: bash scripts/build-release.sh "$GITHUB_REF_NAME" dist
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: dist/voice-asset-mcp-source.cdx.json
+          upload-artifact: false
+      - name: Generate checksums
+        shell: bash
+        run: bash scripts/write-checksums.sh dist
+      - name: Verify release artifacts
+        shell: bash
+        run: bash scripts/verify-release.sh "$GITHUB_REF_NAME" dist --require-sbom
+      - name: Create or update draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --draft --prerelease \
+              --generate-notes --title "VoiceAsset MCP $GITHUB_REF_NAME"
+          fi
