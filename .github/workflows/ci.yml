@@ -49,9 +49,14 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.26.5"
+          cache: false
+      - name: Scan repository history for secrets
+        run: >-
+          go run github.com/zricethezav/gitleaks/v8@v8.24.3 detect
+          --source . --no-banner --redact --exit-code 1
 
   sbom:
     runs-on: ubuntu-latest
